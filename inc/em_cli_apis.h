@@ -413,6 +413,18 @@ extern "C" {
 	 */
 	void dump_lib_dbg(char *fmt);
 
+        /**!
+	 * @brief Fetch the MLO status.
+	 *
+	 * This function returns the MLO status (enabled/disabled) for the given ssid index.
+	 *
+	 * @param[in] ssid_index index string to fetch the MLO status.
+	 *
+	 * @note Ensure that the ssid index is valid and accessible.
+	 */
+         int get_mlo_status_from_dm(const char *ssid_index);
+
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

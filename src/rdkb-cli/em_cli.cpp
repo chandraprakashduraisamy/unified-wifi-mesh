@@ -371,3 +371,49 @@ extern "C" em_network_node_t *get_reset_tree(char *platform)
 {
 	return g_cli.get_reset_tree(platform);
 }
+
+extern "C" int get_mlo_status_from_dm(const char *ssid_index)
+{
+    wifi_bus_desc_t *desc = NULL;
+    bus_handle_t bus_hdl;
+    raw_data_t data;
+    bus_error_t bus_error_val;
+    char service_name[] = "EasyMesh_service_agent";
+    char path[256] = {0};
+    int mlo_status = -1;
+
+    bus_init(&bus_hdl);
+    if(NULL == (desc = get_bus_descriptor())) {
+        em_printfout("Error: bus descriptor is null");
+        return -1;
+    }
+
+    if (desc->bus_open_fn(&bus_hdl, service_name) != 0) {
+        em_printfout("Error: bus open failed");
+        return -1;
+    }
+
+    snprintf(path, sizeof(path), "Device.WiFi.SSID.%s.MLDUnit", ssid_index);
+
+    memset(&data, 0, sizeof(raw_data_t));
+    bus_error_val = desc->bus_data_get_fn(&bus_hdl, path, &data);
+
+    if (bus_error_val != bus_error_success) {
+        em_printfout("Error: bus get failed for path %s, error: %d", path, bus_error_val);
+        return -1;
+    }
+
+    if (data.raw_data.bytes != NULL) {
+        em_printfout("Received data: %s", reinterpret_cast<char *>(data.raw_data.bytes));
+        mlo_status = atoi(reinterpret_cast <char *>(data.raw_data.bytes));
+        em_printfout("MLO status for SSID %s: %d", ssid_index, mlo_status);
+    } else {
+        em_printfout("Error: data.value is NULL for path %s", path);
+    }
+
+    if (data.raw_data.bytes != NULL) {
+        free(data.raw_data.bytes);
+    }
+
+    return mlo_status;
+}
