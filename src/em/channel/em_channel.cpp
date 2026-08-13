@@ -44,6 +44,8 @@
 #include "em_cmd_exec.h"
 #include "util.h"
 
+#define RDKBWIFI561_DISABLE_CSR_TEST
+
 /*
  * Bit mask for BSS Color + BSS Load Present field in Channel Scan Report Message.
  * Defined as constexpr for type safety and limited to this file as it is an
@@ -2504,9 +2506,15 @@ void em_channel_t::process_ctrl_state()
 
         case em_state_ctrl_channel_select_pending:
         case em_state_ctrl_avail_spectrum_inquiry_pending:
-			if(get_service_type() == em_service_type_ctrl) {
-				send_channel_sel_request_msg();
-			}
+            if(get_service_type() == em_service_type_ctrl) {
+#ifdef RDKBWIFI561_DISABLE_CSR_TEST
+                em_printfout("%s-%d: skipped csr from controller and forced em_state_ctrl_channel_selected", __func__, __LINE__);
+                set_state(em_state_ctrl_channel_selected);
+                m_chan_req_msg_id = 0;
+#else
+                send_channel_sel_request_msg();
+#endif
+            }
             break; 
         
         case em_state_ctrl_channel_scan_pending:
