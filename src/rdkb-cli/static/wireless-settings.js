@@ -33,6 +33,7 @@ class WirelessSettings {
     this.updateChannelConfig = {};
     this.currentEditingProfile = null;
     this.updatedProfileKeys = new Set();
+    this.mloStatusCache = {};
 
     // Initialize when DOM is ready
     if (document.readyState === 'loading') {
@@ -242,35 +243,45 @@ class WirelessSettings {
     return '';
   }
 
-  /**
-   * Load wireless settings from API
-   */
-  async loadWirelessSettings() {
+/**
+ * Load wireless settings from API
+*/
+async loadWirelessSettings() {
     try {
+        // Load network profiles
+        const profilesResponse = await this.apiCall('/wireless/profiles');
+        this.networkProfiles = profilesResponse.haulConfig || [];
+        this.updatedNetworkProfiles = JSON.parse(JSON.stringify(this.networkProfiles));
 
-      // Load network profiles
-      const profilesResponse = await this.apiCall('/wireless/profiles');
-      this.networkProfiles = profilesResponse.haulConfig || [];
-      this.updatedNetworkProfiles = JSON.parse(JSON.stringify(this.networkProfiles));
+        // Load radio configurations
+        const radioResponse = await this.apiCall('/wireless/radios');
+        this.radioConfigs = radioResponse.radios || {};
 
-      // Load radio configurations
-      const radioResponse = await this.apiCall('/wireless/radios');
-      this.radioConfigs = radioResponse.radios || {};
+        // Load advanced settings
+        const advancedResponse = await this.apiCall('/wireless/advanced');
+        this.advancedSettings = advancedResponse.settings || {};
 
-      // Load advanced settings
-      const advancedResponse = await this.apiCall('/wireless/advanced');
-      this.advancedSettings = advancedResponse.settings || {};
+        // Load MLO status for private fronthaul SSIDs (1, 2, 17)
+        const ssidIndices = [1, 2, 17];
+        for (const ssidIndex of ssidIndices) {
+            try {
+                const mloResponse = await this.apiCall(`/wireless/mlo-status/${ssidIndex}`);
+                this.mloStatusCache[ssidIndex] = mloResponse.enabled;
+            } catch (error) {
+                console.warn(`Failed to fetch MLO status for SSID ${ssidIndex}:`, error);
+                this.mloStatusCache[ssidIndex] = false; // Default to disabled
+            }
+        }
 
-      // clear updatedProfileKeys
-      this.updatedProfileKeys.clear();
-      this.updateProfileApplyButtonState();
-
-      console.log('✅ Wireless settings loaded successfully');
+        // clear updatedProfileKeys
+        this.updatedProfileKeys.clear();
+        this.updateProfileApplyButtonState();
+        console.log('✅ Wireless settings loaded successfully')
     } catch (error) {
-      console.error('❌ Failed to load wireless settings:', error);
-      this.showNotification('Failed to load wireless settings', 'error');
+        onsole.error('❌ Failed to load wireless settings:', error);
+        this.showNotification('Failed to load wireless settings', 'error');
     }
-  }
+}
 
   /**
    * Update all wireless displays
@@ -1052,51 +1063,54 @@ class WirelessSettings {
     modal.classList.add('active');
   }
 
-  /**
-   * Populate profile form with data
-   */
-  populateProfileForm(profile) {
+/**
+ * Populate profile form with data
+*/
+populateProfileForm(profile) {
     let profileName = profile.HaulType
     if (profileName == "Fronthaul") {
-      profileName = "Home Network"
+        profileName = "Home Network"
     } else if (profileName == "IoT") {
-      profileName = "IOT"
+        profileName = "IOT"
     }
 
     document.getElementById('profile-name').value = profileName || '';
     document.getElementById('profile-ssid').value = profile.SSID || '';
-    document.getElementById('profile-security').value = profile.Security || '';
     document.getElementById('profile-passphrase').value = profile.PassPhrase || '';
     document.getElementById('profile-vlan').value = profile.vlanId || 0;
     document.getElementById('profile-hidden').checked = profile.hidden || false;
+    document.getElementById('profile-security').value = profile.Security || '';
 
-    // hide the passphrase by default
+    // Populate security dropdown
+    const securitySelect = document.getElementById('profile-security');
+    const isPrivateNetwork = profile.HaulType === 'Fronthaul';
+    this.populateSecurityDropdown(securitySelect, isPrivateNetwork, profile.Security);
+
+    // Handle passphrase visibility
     const passInput = document.getElementById('profile-passphrase');
     const toggleBtn = document.getElementById('toggle-passphrase');
     if (passInput.type === "text") {
-      passInput.type = "password";
-      toggleBtn?.setAttribute('aria-label', 'Show password');
-      toggleBtn?.classList.toggle('active', false);
+        passInput.type = "password";
+        toggleBtn?.setAttribute('aria-label', 'Show password');
+        toggleBtn?.classList.toggle('active', false);
     }
 
+    // Handle band selection
     const selectedBands = Array.isArray(profile.Band) ? profile.Band.map(b => b) : [];
-
-    // Clear Previous state for band
     document.getElementById('band-24').checked = false;
-    document.getElementById('band-5').checked  = false;
-    document.getElementById('band-6').checked  = false;
+    document.getElementById('band-5').checked = false;
+    document.getElementById('band-6').checked = false;
 
-    // Set updated value as per available band
     if (selectedBands.includes('2.4GHz')) {
-      document.getElementById('band-24').checked = true;
+        document.getElementById('band-24').checked = true;
     }
     if (selectedBands.includes('5GHz')) {
-      document.getElementById('band-5').checked = true;
+        document.getElementById('band-5').checked = true;
     }
     if (selectedBands.includes('6GHz')) {
-      document.getElementById('band-6').checked = true;
+        document.getElementById('band-6').checked = true;
     }
-  }
+}
 
   /**
    * Handle security type change in modal
@@ -1543,6 +1557,45 @@ class WirelessSettings {
     console.error(`API call failed for ${endpoint}:`, error);
     throw error;
   }
+}
+
+/**
+ * Populate security dropdown with MLO-aware filtering
+*/
+async populateSecurityDropdown(securitySelect, currentSecurity, isPrivateNetwork) {
+    //ssid-index: 1 = 2.4G, 2 = 5G and 17 = 6G
+    const mloEnabled = this.mloStatusCache[17] || false;
+
+    const securityModes = [
+        { value: "Open", label: "Open" },
+        { value: "WPA2 Personal", label: "WPA2 Personal" },
+        { value: "WPA3 Personal", label: "WPA3 Personal" },
+        { value: "WPA3 Transition", label: "WPA3 Transition" }
+    ];
+  
+    securitySelect.innerHTML = '';
+    securityModes.forEach(mode => {
+        const option = document.createElement('option');
+        option.value = mode.value;
+        option.textContent = mode.label;
+        // Disable non-WPA3 modes when MLO is enabled
+        if (isPrivateNetwork && mloEnabled) {
+            const isWPA3 = mode.value === "WPA3 Personal" || mode.value === "WPA3 Transition";
+            if (!isWPA3) {
+                option.disabled = true;
+            }
+        }
+        securitySelect.appendChild(option);
+    });
+  
+    // Set current value if provided
+    if (currentSecurity) {
+        securitySelect.value = currentSecurity;
+        // If current selection is disabled, switch to WPA3 Personal
+        if (securitySelect.value === "" || securitySelect.selectedOptions[0]?.disabled) {
+            securitySelect.value = "WPA3 Personal";
+        }
+    }
 }
 
   /**

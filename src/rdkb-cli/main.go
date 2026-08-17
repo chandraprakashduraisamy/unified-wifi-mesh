@@ -21,7 +21,7 @@ package main
 
 /*
 #cgo CFLAGS: -I../../inc -I../../../OneWifi/include -I../../../OneWifi/source/utils -I../../../halinterface/include
-#cgo LDFLAGS: -L../../install/lib -lemcli -lcjson -lreadline
+#cgo LDFLAGS: -L../../install/lib -L../.././recipe-sysroot/usr/lib -lemcli -lcjson -lreadline
 #include <stdio.h>
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -1968,6 +1968,7 @@ func getRadioConfigsHandler(w http.ResponseWriter, r *http.Request) {
                     Band:       bandLabelMap[band],
                     DeviceList: make([]WifiChannelConfig, 0, len(prevConfigMap)),
                 }
+
                 for _, devPrev := range prevConfigMap {
                     bandEntry.DeviceList = append(bandEntry.DeviceList, WifiChannelConfig{
                         DeviceID:       devPrev.DeviceID,
@@ -2819,6 +2820,7 @@ func main() {
 	api.HandleFunc("/wireless/advanced", getAdvancedWirelessSettingsHandler).Methods("GET")
 	api.HandleFunc("/wireless/advanced", updateAdvancedWirelessSettingsHandler).Methods("PUT")
 
+
 	// Channel Scanning
 	api.HandleFunc("/wireless/scan", startChannelScanHandler).Methods("POST")
 	api.HandleFunc("/wireless/scan/results", getChannelScanResultsHandler).Methods("GET")
@@ -2829,6 +2831,9 @@ func main() {
 
 	// Wireless Policy settings
 	api.HandleFunc("/wifipolicy", getWirelessPolicyHandler).Methods("GET", "POST")
+
+        // MLO Status
+        api.HandleFunc("/wireless/mlo-status/{ssid_index}", getMLOStatusHandler).Methods("GET")
 
         // ===== NEW COVERAGE MAP ROUTES =====
 	
@@ -6878,4 +6883,49 @@ func generateEnhancedHistoricalMetrics(count int, baseLoad float64) []TimeSeries
 	}
 	
 	return metrics
+}
+
+func getMLOStatusHandler(w http.ResponseWriter, r *http.Request) {
+
+    vars := mux.Vars(r)
+    ssidIndexStr := vars["ssid_index"]
+    if ssidIndexStr == "" {
+        http.Error(w, "ssid_index parameter required", http.StatusBadRequest)
+        return
+    }
+
+    ssidIndex, err := strconv.Atoi(ssidIndexStr)
+    if err != nil {
+        http.Error(w, "Invalid ssid_index", http.StatusBadRequest)
+        return
+    }
+
+    cSSIDIndex := C.CString(ssidIndexStr)
+    if cSSIDIndex == nil {
+        http.Error(w, "Failed to allocate C string", http.StatusInternalServerError)
+        return
+    }
+    defer C.free(unsafe.Pointer(cSSIDIndex))
+
+    // Call the CGO wrapper function to get the MLO enabled/disabled status
+    mloStatus := C.get_mlo_status_from_dm(cSSIDIndex)
+    fmt.Printf("Backend returned MLO status: %d", int(mloStatus))
+
+    response := struct {
+        SSIDIndex  int       `json:"ssid_index"`
+        MLOStatus  int       `json:"mlo_status"`
+        MLOEnabled bool      `json:"mlo_enabled"`
+        Timestamp  time.Time `json:"timestamp"`
+    }{
+        SSIDIndex:  ssidIndex,
+        MLOStatus:  int(mloStatus),
+        MLOEnabled: int(mloStatus) == 0,
+        Timestamp:  time.Now(),
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+
+    if err := json.NewEncoder(w).Encode(response); err != nil {
+        fmt.Printf("JSON encode error: %v", err)
+    }
 }
